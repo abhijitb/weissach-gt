@@ -1,0 +1,27 @@
+export const TRACKS = {
+  alpenpass: {
+    name: 'Alpenpass',
+    location: 'Swiss Alps',
+    waypoints: [
+      { x: 0, z: 0 },
+      { x: 0, z: -60 },
+      { x: 15, z: -110 },
+      { x: 50, z: -140 },
+      { x: 80, z: -120 },
+      { x: 100, z: -80 },
+      { x: 95, z: -30 },
+      { x: 70, z: 10 },
+      { x: 30, z: 30 },
+      { x: -10, z: 40 },
+      { x: -50, z: 30 },
+      { x: -80, z: 10 },
+      { x: -100, z: -20 },
+      { x: -95, z: -70 },
+      { x: -70, z: -110 },
+      { x: -30, z: -120 },
+      { x: 0, z: -100 },
+    ],
+    roadWidth: 14,
+    laps: 3,
+  },
+};

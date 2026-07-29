@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { Input } from './Input.js';
 import { Car } from './Car.js';
+import { Track } from './Track.js';
+import { TRACKS } from './tracks/Alpenpass.js';
 
 const CAMERA_MODES = {
   CHASE: 0,
@@ -26,8 +28,8 @@ export class Game {
     this._initScene();
     this._initCamera();
     this._initLights();
-    this._initGround();
     this._initPhysics();
+    this._initTrack();
     this._initCar();
     this._bindEvents();
 
@@ -89,16 +91,17 @@ export class Game {
     this.scene.add(this.hemiLight);
   }
 
-  _initGround() {
-    const groundGeo = new THREE.PlaneGeometry(1000, 1000);
-    const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x3a7d3a,
-      roughness: 0.9,
-    });
-    this.groundMesh = new THREE.Mesh(groundGeo, groundMat);
-    this.groundMesh.rotation.x = -Math.PI / 2;
-    this.groundMesh.receiveShadow = true;
-    this.scene.add(this.groundMesh);
+  _initTrack() {
+    this.track = new Track(TRACKS.alpenpass);
+    this.scene.add(this.track.mesh);
+  }
+
+  _initCar() {
+    const start = this.track.getStartPosition();
+    this.car = new Car(this.world, { color: 0xc41e3a });
+    this.car.chassisBody.position.set(start.x, start.y, start.z);
+    this.car.chassisBody.quaternion.setFromEuler(0, start.angle, 0);
+    this.scene.add(this.car.mesh);
   }
 
   _initPhysics() {
