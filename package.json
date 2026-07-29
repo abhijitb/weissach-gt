@@ -1,0 +1,18 @@
+{
+  "name": "weissach-gt",
+  "version": "0.1.0",
+  "description": "Porsche-inspired racing game inspired by NFS: Porsche Unleashed",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  },
+  "dependencies": {
+    "three": "^0.168.0",
+    "cannon-es": "^0.20.0"
+  }
+}

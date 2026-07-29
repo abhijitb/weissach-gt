@@ -1,0 +1,10 @@
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  server: {
+    allowedHosts: ['.monkeycode-ai.live'],
+  },
+  build: {
+    target: 'esnext',
+  },
+});
