@@ -28,13 +28,13 @@ export class Car {
     this.chassisBody = new CANNON.Body({ mass, shape });
     this.chassisBody.position.set(0, 2, 0);
     this.chassisBody.linearDamping = 0.1;
-    this.chassisBody.angularDamping = 0.6;
-    this.chassisBody.sleepSpeedLimit = 0.1;
-    this.chassisBody.sleepTimeLimit = 1;
+    this.chassisBody.angularDamping = 0.65;
 
     const com = centerOfMassOffset;
     this.chassisBody.shapeOffsets[0].set(com.x, com.y, com.z);
     this.chassisBody.updateMassProperties();
+
+    this.world.addBody(this.chassisBody);
   }
 
   _createVehicle() {
@@ -57,20 +57,6 @@ export class Car {
       rollInfluence,
     } = this.config;
 
-    const options = {
-      radius: wheelRadius,
-      directionLocal: new CANNON.Vec3(0, -1, 0),
-      suspensionStiffness,
-      suspensionDamping,
-      suspensionRestLength,
-      maxSuspensionTravel,
-      frictionSlip,
-      rollInfluence,
-      axleLocal: new CANNON.Vec3(-1, 0, 0),
-      chassisConnectionPointLocal: new CANNON.Vec3(),
-      isFrontWheel: true,
-    };
-
     const positions = this.config.wheelPositions;
     const wheels = [
       { pos: positions.frontLeft, name: 'FL', isFront: true, axleX: -1 },
@@ -79,35 +65,23 @@ export class Car {
       { pos: positions.rearRight, name: 'RR', isFront: false, axleX: 1 },
     ];
 
-    this.wheelBodies = [];
-
     for (const wheel of wheels) {
-      const opts = { ...options };
-      opts.chassisConnectionPointLocal.set(wheel.pos.x, wheel.pos.y, wheel.pos.z);
-      opts.isFrontWheel = wheel.isFront;
-      opts.axleLocal = new CANNON.Vec3(wheel.axleX, 0, 0);
-
-      this.vehicle.addWheel(opts);
+      this.vehicle.addWheel({
+        radius: wheelRadius,
+        directionLocal: new CANNON.Vec3(0, -1, 0),
+        suspensionStiffness,
+        suspensionDamping,
+        suspensionRestLength,
+        maxSuspensionTravel,
+        frictionSlip,
+        rollInfluence,
+        axleLocal: new CANNON.Vec3(wheel.axleX, 0, 0),
+        chassisConnectionPointLocal: new CANNON.Vec3(wheel.pos.x, wheel.pos.y, wheel.pos.z),
+        isFrontWheel: wheel.isFront,
+      });
     }
 
     this.vehicle.addToWorld(this.world);
-
-    const wheelMat = new CANNON.Material('wheel');
-    this.wheelBodies = this.vehicle.wheelInfos.map((info, i) => {
-      const body = new CANNON.Body({ mass: 0 });
-      body.addShape(new CANNON.Cylinder(wheelRadius, wheelRadius, 0.2, 8), new CANNON.Vec3(0, 0, 0));
-      body.material = wheelMat;
-      return body;
-    });
-
-    const groundMat = this.world.defaultContactMaterial;
-    const wheelGroundContact = new CANNON.ContactMaterial(wheelMat, groundMat, {
-      friction: 0.9,
-      restitution: 0.1,
-      contactEquationStiffness: 1e8,
-      contactEquationRelaxation: 3,
-    });
-    this.world.addContactMaterial(wheelGroundContact);
   }
 
   _createVisual() {
@@ -151,6 +125,7 @@ export class Car {
 
     for (let i = 0; i < 4; i++) {
       const wheelMesh = new THREE.Mesh(wheelGeo, wheelMat);
+      wheelMesh.rotation.z = Math.PI / 2;
       wheelMesh.castShadow = true;
       wheelMesh.receiveShadow = true;
       this.wheelMeshes.push(wheelMesh);
@@ -158,7 +133,7 @@ export class Car {
     }
   }
 
-  update(dt, input) {
+  applyInput(dt, input) {
     const { maxEngineForce, maxBrakeForce, maxSteerAngle, steerSpeed } = this.config;
 
     let targetSteer = 0;
@@ -170,10 +145,10 @@ export class Car {
       this.steerAngle = Math.min(this.steerAngle + steerDelta, targetSteer);
     } else if (targetSteer < this.steerAngle) {
       this.steerAngle = Math.max(this.steerAngle - steerDelta, targetSteer);
-    } else if (Math.abs(this.steerAngle) < steerDelta) {
-      this.steerAngle = 0;
     } else {
-      this.steerAngle -= Math.sign(this.steerAngle) * steerDelta;
+      this.steerAngle = this.steerAngle > 0
+        ? Math.max(0, this.steerAngle - steerDelta)
+        : Math.min(0, this.steerAngle + steerDelta);
     }
 
     this.engineForce = 0;
@@ -185,7 +160,6 @@ export class Car {
     if (input.isDown('brake')) {
       this.brakeForce = maxBrakeForce;
     }
-
     if (input.isDown('handbrake')) {
       this.brakeForce = maxBrakeForce * 2;
     }
@@ -200,29 +174,27 @@ export class Car {
     this.vehicle.setSteeringValue(this.steerAngle, 0);
     this.vehicle.setSteeringValue(this.steerAngle, 1);
 
-    const velocity = this.chassisBody.velocity;
-    this.speed = velocity.length();
-
-    this._syncVisual();
+    this.speed = this.chassisBody.velocity.length();
   }
 
-  _syncVisual() {
+  syncVisual() {
     const pos = this.chassisBody.position;
     const quat = this.chassisBody.quaternion;
     this.mesh.position.set(pos.x, pos.y, pos.z);
     this.mesh.quaternion.set(quat.x, quat.y, quat.z, quat.w);
 
+    const chassisWorldPos = new THREE.Vector3(pos.x, pos.y, pos.z);
+
     for (let i = 0; i < this.vehicle.wheelInfos.length; i++) {
-      const info = this.vehicle.wheelInfos[i];
       this.vehicle.updateWheelTransform(i);
-      const t = info.worldTransform;
+      const t = this.vehicle.wheelInfos[i].worldTransform;
       const wheelMesh = this.wheelMeshes[i];
-      wheelMesh.position.set(t.position.x, t.position.y, t.position.z);
-      wheelMesh.quaternion.set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
+      const worldPos = new THREE.Vector3(t.position.x, t.position.y, t.position.z);
+      wheelMesh.position.copy(worldPos.sub(chassisWorldPos));
     }
   }
 
-  reset(position = { x: 0, y: 2, z: 0 }) {
+  reset(position = { x: 0, y: 1.5, z: 0 }) {
     this.chassisBody.position.set(position.x, position.y, position.z);
     this.chassisBody.velocity.set(0, 0, 0);
     this.chassisBody.angularVelocity.set(0, 0, 0);

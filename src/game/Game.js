@@ -3,6 +3,13 @@ import * as CANNON from 'cannon-es';
 import { Input } from './Input.js';
 import { Car } from './Car.js';
 
+const CAMERA_MODES = {
+  CHASE: 0,
+  HOOD: 1,
+  COCKPIT: 2,
+  SIDE: 3,
+};
+
 export class Game {
   constructor() {
     this.isRunning = false;
@@ -11,6 +18,7 @@ export class Game {
     this.fixedTimeStep = 1 / 60;
     this.maxSubSteps = 3;
     this.accumulator = 0;
+    this.cameraMode = CAMERA_MODES.CHASE;
   }
 
   init() {
@@ -56,7 +64,7 @@ export class Game {
     );
     this.camera.position.set(0, 6, 10);
     this.cameraTarget = new THREE.Vector3(0, 1, 0);
-    this.cameraOffset = new THREE.Vector3(0, 3, -8);
+    this.cameraLookTarget = new THREE.Vector3(0, 1, -5);
   }
 
   _initLights() {
@@ -97,8 +105,11 @@ export class Game {
     this.world = new CANNON.World();
     this.world.gravity.set(0, -9.81, 0);
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
-    this.world.defaultContactMaterial.restitution = 0.3;
-    this.world.defaultContactMaterial.friction = 0.5;
+    this.world.defaultContactMaterial = new CANNON.ContactMaterial(
+      this.world.defaultContactMaterial,
+      this.world.defaultContactMaterial,
+      { friction: 0.5, restitution: 0.3 }
+    );
     this.world.solver.iterations = 10;
     this.world.allowSleep = true;
 
@@ -123,25 +134,60 @@ export class Game {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
+  _toggleCamera() {
+    this.cameraMode = (this.cameraMode + 1) % 4;
+  }
+
   _updateCamera(dt) {
     if (!this.car) return;
 
     const carPos = this.car.chassisBody.position;
     const carQuat = this.car.chassisBody.quaternion;
+    const carQ = new THREE.Quaternion(carQuat.x, carQuat.y, carQuat.z, carQuat.w);
 
     const targetPos = new THREE.Vector3(carPos.x, carPos.y, carPos.z);
+    this.cameraTarget.lerp(targetPos, 8 * dt);
 
-    this.cameraTarget.lerp(targetPos, 5 * dt);
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(carQ);
 
-    const forward = new THREE.Vector3(0, 0, 1);
-    forward.applyQuaternion(new THREE.Quaternion(carQuat.x, carQuat.y, carQuat.z, carQuat.w));
+    let desiredPos;
+    let lookAtTarget;
 
-    const desiredPos = this.cameraTarget.clone()
-      .add(new THREE.Vector3(0, this.cameraOffset.y, 0))
-      .add(forward.clone().multiplyScalar(this.cameraOffset.z));
+    switch (this.cameraMode) {
+      case CAMERA_MODES.CHASE:
+        desiredPos = this.cameraTarget.clone()
+          .add(new THREE.Vector3(0, 4, 0))
+          .add(forward.clone().multiplyScalar(-10));
+        lookAtTarget = this.cameraTarget.clone().add(forward.clone().multiplyScalar(8));
+        break;
 
-    this.camera.position.lerp(desiredPos, 4 * dt);
-    this.camera.lookAt(this.cameraTarget);
+      case CAMERA_MODES.HOOD:
+        desiredPos = targetPos.clone()
+          .add(new THREE.Vector3(0, 1.0, 0))
+          .add(forward.clone().multiplyScalar(1.5));
+        lookAtTarget = targetPos.clone().add(forward.clone().multiplyScalar(20));
+        break;
+
+      case CAMERA_MODES.COCKPIT:
+        desiredPos = targetPos.clone()
+          .add(new THREE.Vector3(0, 0.9, 0))
+          .add(forward.clone().multiplyScalar(0.5));
+        lookAtTarget = targetPos.clone().add(forward.clone().multiplyScalar(20));
+        break;
+
+      case CAMERA_MODES.SIDE: {
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(carQ);
+        desiredPos = targetPos.clone()
+          .add(right.clone().multiplyScalar(8))
+          .add(new THREE.Vector3(0, 2, 0));
+        lookAtTarget = targetPos;
+        break;
+      }
+    }
+
+    this.camera.position.lerp(desiredPos, 5 * dt);
+    this.cameraLookTarget.lerp(lookAtTarget, 8 * dt);
+    this.camera.lookAt(this.cameraLookTarget);
   }
 
   loop() {
@@ -149,14 +195,20 @@ export class Game {
     requestAnimationFrame(() => this.loop());
 
     const dt = Math.min(this.clock.getDelta(), 0.1);
+
+    if (this.input.wasPressed('cameraToggle')) {
+      this._toggleCamera();
+    }
+
     this.accumulator += dt;
 
     while (this.accumulator >= this.fixedTimeStep) {
+      this.car.applyInput(this.fixedTimeStep, this.input);
       this.world.step(this.fixedTimeStep);
       this.accumulator -= this.fixedTimeStep;
     }
 
-    this.car.update(dt, this.input);
+    this.car.syncVisual();
     this._updateCamera(dt);
     this.input.update();
     this.renderer.render(this.scene, this.camera);
