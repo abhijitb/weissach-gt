@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { Input } from './Input.js';
+import { Car } from './Car.js';
 
 export class Game {
   constructor() {
@@ -19,6 +20,7 @@ export class Game {
     this._initLights();
     this._initGround();
     this._initPhysics();
+    this._initCar();
     this._bindEvents();
 
     this.isRunning = true;
@@ -52,8 +54,9 @@ export class Game {
       0.5,
       1000
     );
-    this.camera.position.set(0, 8, 15);
-    this.camera.lookAt(0, 0, 0);
+    this.camera.position.set(0, 6, 10);
+    this.cameraTarget = new THREE.Vector3(0, 1, 0);
+    this.cameraOffset = new THREE.Vector3(0, 3, -8);
   }
 
   _initLights() {
@@ -105,6 +108,11 @@ export class Game {
     this.world.addBody(this.groundBody);
   }
 
+  _initCar() {
+    this.car = new Car(this.world, { color: 0xc41e3a });
+    this.scene.add(this.car.mesh);
+  }
+
   _bindEvents() {
     window.addEventListener('resize', () => this._onResize());
   }
@@ -113,6 +121,27 @@ export class Game {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  _updateCamera(dt) {
+    if (!this.car) return;
+
+    const carPos = this.car.chassisBody.position;
+    const carQuat = this.car.chassisBody.quaternion;
+
+    const targetPos = new THREE.Vector3(carPos.x, carPos.y, carPos.z);
+
+    this.cameraTarget.lerp(targetPos, 5 * dt);
+
+    const forward = new THREE.Vector3(0, 0, 1);
+    forward.applyQuaternion(new THREE.Quaternion(carQuat.x, carQuat.y, carQuat.z, carQuat.w));
+
+    const desiredPos = this.cameraTarget.clone()
+      .add(new THREE.Vector3(0, this.cameraOffset.y, 0))
+      .add(forward.clone().multiplyScalar(this.cameraOffset.z));
+
+    this.camera.position.lerp(desiredPos, 4 * dt);
+    this.camera.lookAt(this.cameraTarget);
   }
 
   loop() {
@@ -127,6 +156,8 @@ export class Game {
       this.accumulator -= this.fixedTimeStep;
     }
 
+    this.car.update(dt, this.input);
+    this._updateCamera(dt);
     this.input.update();
     this.renderer.render(this.scene, this.camera);
   }
