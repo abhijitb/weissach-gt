@@ -12,6 +12,9 @@ const ROAD_LIFT = 0.05;
 const BARRIER_CENTRE_HEIGHT = 1.1;
 const BARRIER_HALF_HEIGHT = 0.35;
 
+// How far back down the track the car starts from the start/finish line.
+const GRID_SETBACK = 8;
+
 const _dummy = new THREE.Object3D();
 const _color = new THREE.Color();
 
@@ -455,13 +458,22 @@ export class Track {
     );
     this.startLineGroup = group;
     this.mesh.add(group);
+    this.startLinePosition = position;
+    this.startLineDirection = direction;
 
-    const flat = new THREE.Vector3(direction.x, 0, direction.z).normalize();
+    // Grid slot sits back down the track from the line, so the first crossing
+    // of start/finish completes a lap instead of beginning one. Sampled off the
+    // curve rather than offset in a straight line, so it picks up the road's
+    // elevation and heading at that point.
+    const gridT = 1 - GRID_SETBACK / this.trackLength;
+    const gridPoint = this.curve.getPointAt(gridT);
+    const gridTangent = TrackBuilder._getTangent(this.curve, gridT);
+
     this.startPosition = {
-      x: position.x + flat.x * 6,
-      y: position.y + ROAD_LIFT + 1.0,
-      z: position.z + flat.z * 6,
-      angle: Math.atan2(flat.x, flat.z),
+      x: gridPoint.x,
+      y: gridPoint.y + ROAD_LIFT + 1.0,
+      z: gridPoint.z,
+      angle: Math.atan2(gridTangent.x, gridTangent.z),
     };
   }
 
