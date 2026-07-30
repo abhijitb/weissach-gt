@@ -3,7 +3,16 @@ import * as CANNON from 'cannon-es';
 import { Input } from './Input.js';
 import { Car } from './Car.js';
 import { Track } from './Track.js';
+import { Environment } from './Environment.js';
 import { TRACKS } from './tracks/Alpenpass.js';
+
+// Below this the car has left the corridor entirely — put it back on the line.
+const FALL_LIMIT = -40;
+// How long the car may sit flipped/stranded before it is put back.
+const OVERTURN_RESET_SECONDS = 2.5;
+
+const UP_LOCAL = new CANNON.Vec3(0, 1, 0);
+const _worldUp = new CANNON.Vec3();
 
 const CAMERA_MODES = {
   CHASE: 0,
@@ -21,6 +30,7 @@ export class Game {
     this.maxSubSteps = 3;
     this.accumulator = 0;
     this.cameraMode = CAMERA_MODES.CHASE;
+    this.overturnedFor = 0;
   }
 
   init() {
@@ -35,17 +45,19 @@ export class Game {
 
     this.isRunning = true;
     this.clock.start();
+    window.__game = this; // DEBUG
     this.loop();
   }
 
   _initRenderer() {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = 1.1;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const app = document.getElementById('app');
     app.appendChild(this.renderer.domElement);
@@ -53,16 +65,16 @@ export class Game {
 
   _initScene() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x87ceeb);
-    this.scene.fog = new THREE.Fog(0x87ceeb, 200, 800);
+    this.scene.fog = new THREE.FogExp2(0xa3cbe8, 0.0005);
+    this.environment = new Environment(this.scene);
   }
 
   _initCamera() {
     this.camera = new THREE.PerspectiveCamera(
-      60,
+      65,
       window.innerWidth / window.innerHeight,
       0.5,
-      1000
+      6000
     );
     this.camera.position.set(0, 6, 10);
     this.cameraTarget = new THREE.Vector3(0, 1, 0);
@@ -70,61 +82,97 @@ export class Game {
   }
 
   _initLights() {
-    this.ambientLight = new THREE.AmbientLight(0x404060, 0.6);
+    this.ambientLight = new THREE.AmbientLight(0x8090b0, 0.5);
     this.scene.add(this.ambientLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    this.sunLight.position.set(100, 150, 50);
+    this.sunLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
+    // Offset from the car; the light and its target track the car each frame so
+    // the shadow camera only has to cover the area we can actually see.
+    this.sunOffset = new THREE.Vector3(90, 140, -170);
+    this.sunLight.position.copy(this.sunOffset);
     this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.width = 2048;
-    this.sunLight.shadow.mapSize.height = 2048;
-    this.sunLight.shadow.camera.near = 1;
-    this.sunLight.shadow.camera.far = 500;
-    this.sunLight.shadow.camera.left = -100;
-    this.sunLight.shadow.camera.right = 100;
-    this.sunLight.shadow.camera.top = 100;
-    this.sunLight.shadow.camera.bottom = -100;
-    this.sunLight.shadow.bias = -0.0005;
+    this.sunLight.shadow.mapSize.width = 4096;
+    this.sunLight.shadow.mapSize.height = 4096;
+    this.sunLight.shadow.camera.near = 10;
+    this.sunLight.shadow.camera.far = 520;
+    this.sunLight.shadow.camera.left = -110;
+    this.sunLight.shadow.camera.right = 110;
+    this.sunLight.shadow.camera.top = 110;
+    this.sunLight.shadow.camera.bottom = -110;
+    this.sunLight.shadow.bias = -0.0003;
+    this.sunLight.shadow.normalBias = 0.02;
     this.scene.add(this.sunLight);
+    this.scene.add(this.sunLight.target);
 
-    this.hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x362907, 0.4);
+    this.hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x3a5a1e, 0.6);
     this.scene.add(this.hemiLight);
+
+    // Warm fill light from opposite side
+    const fillLight = new THREE.DirectionalLight(0xffe0b0, 0.3);
+    fillLight.position.set(-100, 50, 200);
+    this.scene.add(fillLight);
   }
 
   _initTrack() {
     this.track = new Track(TRACKS.alpenpass);
     this.scene.add(this.track.mesh);
+
+    // The corridor trimesh is the surface the wheel raycasts hit.
+    this.trackBody = this.track.createColliderBody();
+    this.world.addBody(this.trackBody);
+
+    // Solid guardrails keep the car on the road, so respawning is only for
+    // getting stuck or flipped.
+    this.barrierBodies = this.track.createBarrierBodies();
+    for (const body of this.barrierBodies) {
+      this.world.addBody(body);
+    }
   }
 
   _initCar() {
-    const start = this.track.getStartPosition();
     this.car = new Car(this.world, { color: 0xc41e3a });
-    this.car.chassisBody.position.set(start.x, start.y, start.z);
-    this.car.chassisBody.quaternion.setFromEuler(0, start.angle, 0);
     this.scene.add(this.car.mesh);
+    this._respawn();
+  }
+
+  /** Put the car back on the start line, upright and stopped. */
+  _respawn() {
+    const start = this.track.getStartPosition();
+    this.car.reset(start, start.angle);
+    this.overturnedFor = 0;
+  }
+
+  /**
+   * Recover from the only situations the guardrails cannot: flipped onto the
+   * roof, or dropped off the track entirely.
+   */
+  _checkRecovery(dt) {
+    const body = this.car.chassisBody;
+    if (body.position.y < FALL_LIMIT) {
+      this._respawn();
+      return;
+    }
+
+    body.quaternion.vmult(UP_LOCAL, _worldUp);
+    const stranded = _worldUp.y < 0.35 && body.velocity.length() < 1.5;
+    this.overturnedFor = stranded ? this.overturnedFor + dt : 0;
+
+    if (this.overturnedFor > OVERTURN_RESET_SECONDS) {
+      this._respawn();
+    }
   }
 
   _initPhysics() {
     this.world = new CANNON.World();
     this.world.gravity.set(0, -9.81, 0);
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
-    this.world.defaultContactMaterial = new CANNON.ContactMaterial(
-      this.world.defaultContactMaterial,
-      this.world.defaultContactMaterial,
-      { friction: 0.5, restitution: 0.3 }
-    );
+    this.world.defaultContactMaterial.friction = 0.5;
+    this.world.defaultContactMaterial.restitution = 0.3;
     this.world.solver.iterations = 10;
     this.world.allowSleep = true;
 
-    const groundShape = new CANNON.Plane();
-    this.groundBody = new CANNON.Body({ mass: 0, shape: groundShape });
-    this.groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-    this.world.addBody(this.groundBody);
-  }
-
-  _initCar() {
-    this.car = new Car(this.world, { color: 0xc41e3a });
-    this.scene.add(this.car.mesh);
+    // No ground plane: the track supplies its own collision mesh in
+    // _initTrack(). Anything that falls past the corridor edge respawns.
   }
 
   _bindEvents() {
@@ -135,6 +183,12 @@ export class Game {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  _updateSun() {
+    const p = this.car.mesh.position;
+    this.sunLight.target.position.copy(p);
+    this.sunLight.position.copy(p).add(this.sunOffset);
   }
 
   _toggleCamera() {
@@ -202,6 +256,10 @@ export class Game {
     if (this.input.wasPressed('cameraToggle')) {
       this._toggleCamera();
     }
+    if (this.input.wasPressed('respawn')) {
+      this._respawn();
+    }
+    this._checkRecovery(dt);
 
     this.accumulator += dt;
 
@@ -213,6 +271,8 @@ export class Game {
 
     this.car.syncVisual();
     this._updateCamera(dt);
+    this._updateSun();
+    this.environment.update(dt);
     this.input.update();
     this.renderer.render(this.scene, this.camera);
   }

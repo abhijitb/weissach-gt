@@ -4,28 +4,35 @@ export const DEFAULT_CAR_CONFIG = {
   chassisHeight: 0.6,
   chassisLength: 4.0,
 
-  centerOfMassOffset: { x: 0, y: -0.2, z: 0.3 },
-
   wheelRadius: 0.33,
-  suspensionStiffness: 28,
-  suspensionDamping: 3.2,
+  suspensionStiffness: 30,
+  suspensionDamping: 4.4,
   suspensionRestLength: 0.3,
-  maxSuspensionTravel: 0.2,
+  maxSuspensionTravel: 0.25,
   suspensionForceMax: 50000,
 
-  frictionSlip: 5.5,
-  rollInfluence: 0.01,
+  frictionSlip: 4.0,
+  rollInfluence: 0.05,
 
   maxEngineForce: 3500,
-  maxBrakeForce: 25,
-  maxSteerAngle: 0.55,
-  steerSpeed: 3.0,
+  // NOTE: cannon's RaycastVehicle treats brake as a per-wheel *impulse* (it is
+  // used as maxImpulse directly), while engineForce is a force multiplied by
+  // the timestep. They are not the same units — brake ≈ force / 60 at 60 Hz.
+  // 38 works out to roughly 1.1 g of braking on an 850 kg car.
+  maxBrakeForce: 38,
+  maxSteerAngle: 0.5,
+  steerSpeed: 4.0,
+
+  // Reverse is deliberately weaker and speed-capped (m/s) so it stays a
+  // manoeuvring gear rather than a second way to drive the track.
+  maxReverseForce: 1600,
+  maxReverseSpeed: 11,
 
   wheelPositions: {
-    frontLeft:  { x: -0.75, y: -0.35, z: 1.4 },
-    frontRight: { x: 0.75,  y: -0.35, z: 1.4 },
-    rearLeft:   { x: -0.75, y: -0.35, z: -1.3 },
-    rearRight:  { x: 0.75,  y: -0.35, z: -1.3 },
+    frontLeft:  { x: -0.8, y: -0.25, z: 1.35 },
+    frontRight: { x: 0.8,  y: -0.25, z: 1.35 },
+    rearLeft:   { x: -0.8, y: -0.25, z: -1.35 },
+    rearRight:  { x: 0.8,  y: -0.25, z: -1.35 },
   },
 };
 
@@ -89,6 +96,8 @@ export const CARS = {
 export function buildCarConfig(carId) {
   const carOverride = CARS[carId] || {};
   const config = { ...DEFAULT_CAR_CONFIG, ...carOverride };
-  config.maxBrakeForce = config.maxEngineForce * 0.8;
+  // Brake is an impulse, so it scales with mass rather than engine output.
+  config.maxBrakeForce = config.mass * 0.045;
+  config.maxReverseForce = config.maxEngineForce * 0.45;
   return config;
 }

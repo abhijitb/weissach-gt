@@ -5,6 +5,7 @@ const KEY_MAP = {
   steerRight: ['KeyD', 'ArrowRight'],
   handbrake: ['Space'],
   cameraToggle: ['KeyC'],
+  respawn: ['KeyR'],
   pause: ['Escape'],
 };
 
