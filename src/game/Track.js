@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { TrackBuilder } from './TrackBuilder.js';
+import { getTheme } from './Themes.js';
 
 const CORRIDOR_HALF_WIDTH = 40;
 const CORRIDOR_EDGE_DROP = -8;
@@ -21,6 +22,7 @@ const _color = new THREE.Color();
 export class Track {
   constructor(trackData) {
     this.data = trackData;
+    this.theme = getTheme(trackData.theme);
     this.mesh = new THREE.Group();
     this._centre = this._computeCentre();
 
@@ -60,7 +62,7 @@ export class Track {
       geometry,
       new THREE.MeshStandardMaterial({
         map: grassTexture,
-        color: 0x5a9a45,
+        color: this.theme.verge,
         roughness: 0.95,
         metalness: 0.0,
       })
@@ -173,10 +175,11 @@ export class Track {
 
   /** Multi-scale ridges for the ground beyond the corridor. */
   _noise(x, z) {
+    const [a, b, c] = this.theme.terrain.noise;
     return (
-      Math.sin(x * 0.004 + 1.7) * Math.cos(z * 0.005 + 0.5) * 26 +
-      Math.sin(x * 0.013) * Math.cos(z * 0.011) * 11 +
-      Math.sin(x * 0.05) * Math.cos(z * 0.045) * 2.5
+      Math.sin(x * 0.004 + 1.7) * Math.cos(z * 0.005 + 0.5) * a +
+      Math.sin(x * 0.013) * Math.cos(z * 0.011) * b +
+      Math.sin(x * 0.05) * Math.cos(z * 0.045) * c
     );
   }
 
@@ -197,9 +200,11 @@ export class Track {
     const c = this._centre;
     const inside =
       Math.hypot(x - c.x, z - c.z) < Math.hypot(near.x - c.x, near.z - c.z);
-    const slope = inside
-      ? Math.min(beyond * 0.14, 210)
-      : -Math.min(beyond * 0.09, 120);
+    const profile = inside ? this.theme.terrain.inside : this.theme.terrain.outside;
+    const rise = beyond * profile.slope;
+    const slope = profile.cap >= 0
+      ? Math.min(rise, profile.cap)
+      : -Math.min(rise, -profile.cap);
 
     return base - 0.6 * (1 - blend) + blend * (slope + this._noise(x, z));
   }
@@ -236,7 +241,7 @@ export class Track {
       grassGeo,
       new THREE.MeshStandardMaterial({
         map: grassTexture,
-        color: 0x4a8a3a,
+        color: this.theme.ground.color,
         roughness: 0.95,
         metalness: 0.0,
       })
@@ -246,9 +251,29 @@ export class Track {
     grass.receiveShadow = true;
     this.mesh.add(grass);
 
+    this._addSea(bounds);
     this._addTrees();
     this._addBarriers();
     this._addRocks();
+    this._addBuildings();
+  }
+
+  /** Flat water plane for coastal themes, filling in below the cliff line. */
+  _addSea(bounds) {
+    const sea = this.theme.sea;
+    if (!sea) return;
+
+    const water = new THREE.Mesh(
+      new THREE.PlaneGeometry(bounds.w * 1.6, bounds.h * 1.6),
+      new THREE.MeshStandardMaterial({
+        color: sea.color,
+        roughness: 0.25,
+        metalness: 0.35,
+      })
+    );
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(bounds.cx, sea.level, bounds.cz);
+    this.mesh.add(water);
   }
 
   _createGrassTexture() {
@@ -257,15 +282,21 @@ export class Track {
     canvas.height = 256;
     const ctx = canvas.getContext('2d');
 
-    ctx.fillStyle = '#3a7a2a';
+    const { base, blade } = this.theme.ground;
+    ctx.fillStyle = base;
     ctx.fillRect(0, 0, 256, 256);
 
+    // Parsed by hand rather than through THREE.Color, which would convert the
+    // hex out of sRGB and give us the wrong channel values for a canvas fill.
+    const hex = parseInt(blade.slice(1), 16);
+    const br = (hex >> 16) & 255;
+    const bg = (hex >> 8) & 255;
+    const bb = hex & 255;
+
     for (let i = 0; i < 5000; i++) {
-      const x = Math.random() * 256;
-      const y = Math.random() * 256;
-      const g = 80 + Math.random() * 80;
-      ctx.fillStyle = `rgba(${g * 0.4}, ${g}, ${g * 0.2}, 0.4)`;
-      ctx.fillRect(x, y, 1, 2 + Math.random() * 3);
+      const shade = 0.7 + Math.random() * 0.6;
+      ctx.fillStyle = `rgba(${Math.round(br * shade)}, ${Math.round(bg * shade)}, ${Math.round(bb * shade)}, 0.4)`;
+      ctx.fillRect(Math.random() * 256, Math.random() * 256, 1, 2 + Math.random() * 3);
     }
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -305,25 +336,37 @@ export class Track {
     for (let n = 0; n < count; n++) {
       const i = Math.floor((n / count) * segments);
       const pt = pts[i];
-      const perp = TrackBuilder._getPerp(TrackBuilder._getTangent(this.curve, i / segments));
+      const tangent = TrackBuilder._getTangent(this.curve, i / segments);
+      const perp = TrackBuilder._getPerp(tangent);
 
       const side = Math.random() > 0.5 ? 1 : -1;
       const offset = minOffset + Math.random() * (maxOffset - minOffset);
       const x = pt.x + perp.x * side * offset;
       const z = pt.z + perp.z * side * offset;
-      out.push({ x, z, y: this._propHeightAt(x, z, pt.y, offset) });
+      out.push({
+        x,
+        z,
+        y: this._propHeightAt(x, z, pt.y, offset),
+        yaw: Math.atan2(tangent.x, tangent.z),
+        side,
+      });
     }
     return out;
   }
 
   _addTrees() {
-    const spots = this._scatter(520, 16, 90).filter(() => Math.random() > 0.25);
-    const conifers = spots.filter((_, i) => i % 2 === 0);
-    const broadleaf = spots.filter((_, i) => i % 2 === 1);
+    const spec = this.theme.trees;
+    if (!spec || !spec.count) return;
+
+    const spots = this._scatter(spec.count, spec.minOffset, spec.maxOffset)
+      .filter(() => Math.random() > 0.25);
+    const split = Math.floor(spots.length * spec.coniferShare);
+    const conifers = spots.slice(0, split);
+    const broadleaf = spots.slice(split);
 
     const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a2a10, roughness: 0.9 });
     const foliageMat = new THREE.MeshStandardMaterial({ roughness: 0.8, vertexColors: false });
-    const foliageTints = [0x1a5a1a, 0x2a6a20, 0x1a4a2a, 0x25702a];
+    const foliageTints = spec.tints;
 
     const add = (geo, mat, count, castShadow = true) => {
       const im = new THREE.InstancedMesh(geo, mat, count);
@@ -429,7 +472,12 @@ export class Track {
   }
 
   _addRocks() {
-    const spots = this._scatter(140, 12, 70).filter(() => Math.random() > 0.4);
+    const spec = this.theme.rocks;
+    if (!spec || !spec.count) return;
+
+    const spots = this._scatter(spec.count, spec.minOffset, spec.maxOffset)
+      .filter(() => Math.random() > 0.4);
+    if (!spots.length) return;
     const mat = new THREE.MeshStandardMaterial({ color: 0x6f6f68, roughness: 0.9, flatShading: true });
     const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), mat, spots.length);
     rocks.castShadow = true;
@@ -448,6 +496,70 @@ export class Track {
     rocks.instanceMatrix.needsUpdate = true;
     if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
     this.mesh.add(rocks);
+  }
+
+  /**
+   * Roadside structures: a scaled box for the walls plus a four-sided cone,
+   * turned 45 degrees, for a hipped roof. Both instanced, so a street's worth
+   * of buildings costs two draw calls.
+   */
+  _addBuildings() {
+    const spec = this.theme.buildings;
+    if (!spec || !spec.count) return;
+
+    const spots = this._scatter(spec.count, spec.minOffset, spec.maxOffset);
+    if (!spots.length) return;
+
+    const walls = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0.0 }),
+      spots.length
+    );
+    const roofs = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(0.72, 1, 4),
+      new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.0 }),
+      spots.length
+    );
+    for (const im of [walls, roofs]) {
+      im.castShadow = true;
+      im.receiveShadow = true;
+    }
+
+    const pick = (range) => range[0] + Math.random() * (range[1] - range[0]);
+    const tint = (list) => list[Math.floor(Math.random() * list.length)];
+
+    spots.forEach((s, i) => {
+      const w = pick(spec.width);
+      const d = pick(spec.depth);
+      const h = pick(spec.height);
+      const roofHeight = pick(spec.roofHeight);
+      // Sink slightly so the base never floats over uneven ground.
+      const baseY = s.y - 0.4;
+
+      _dummy.rotation.set(0, s.yaw, 0);
+      _dummy.position.set(s.x, baseY + h / 2, s.z);
+      _dummy.scale.set(w, h, d);
+      _dummy.updateMatrix();
+      walls.setMatrixAt(i, _dummy.matrix);
+      walls.setColorAt(i, _color.setHex(tint(spec.wallTints)));
+
+      // The cone's square base sits diagonally in local space, so turn it 45
+      // degrees to line the eaves up with the walls. Kept square (mean of w/d)
+      // because scale is applied before that rotation and would otherwise skew.
+      const span = ((w + d) / 2) * 1.05;
+      _dummy.rotation.set(0, s.yaw + Math.PI / 4, 0);
+      _dummy.position.set(s.x, baseY + h + roofHeight / 2, s.z);
+      _dummy.scale.set(span, roofHeight, span);
+      _dummy.updateMatrix();
+      roofs.setMatrixAt(i, _dummy.matrix);
+      roofs.setColorAt(i, _color.setHex(tint(spec.roofTints)));
+    });
+
+    for (const im of [walls, roofs]) {
+      im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    }
+    this.mesh.add(walls, roofs);
   }
 
   _buildStartLine() {

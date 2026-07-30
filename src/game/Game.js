@@ -4,7 +4,10 @@ import { Input } from './Input.js';
 import { Car } from './Car.js';
 import { Track } from './Track.js';
 import { Environment } from './Environment.js';
-import { TRACKS } from './tracks/Alpenpass.js';
+import { Race } from './Race.js';
+import { Hud } from './Hud.js';
+import { getTrack } from './tracks/index.js';
+import { getTheme } from './Themes.js';
 
 // Below this the car has left the corridor entirely — put it back on the line.
 const FALL_LIMIT = -40;
@@ -22,7 +25,8 @@ const CAMERA_MODES = {
 };
 
 export class Game {
-  constructor() {
+  constructor({ trackId = 'alpenpass' } = {}) {
+    this.trackId = trackId;
     this.isRunning = false;
     this.clock = new THREE.Clock();
     this.input = new Input();
@@ -34,6 +38,10 @@ export class Game {
   }
 
   init() {
+    // Resolved first: the scene, fog and lighting all read from the theme.
+    this.trackData = getTrack(this.trackId);
+    this.theme = getTheme(this.trackData.theme);
+
     this._initRenderer();
     this._initScene();
     this._initCamera();
@@ -65,8 +73,8 @@ export class Game {
 
   _initScene() {
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0xa3cbe8, 0.0005);
-    this.environment = new Environment(this.scene);
+    this.scene.fog = new THREE.FogExp2(this.theme.fog.color, this.theme.fog.density);
+    this.environment = new Environment(this.scene, this.theme);
   }
 
   _initCamera() {
@@ -82,10 +90,12 @@ export class Game {
   }
 
   _initLights() {
-    this.ambientLight = new THREE.AmbientLight(0x8090b0, 0.5);
+    const light = this.theme.light;
+
+    this.ambientLight = new THREE.AmbientLight(light.ambient, light.ambientIntensity);
     this.scene.add(this.ambientLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
+    this.sunLight = new THREE.DirectionalLight(light.sun, light.sunIntensity);
     // Offset from the car; the light and its target track the car each frame so
     // the shadow camera only has to cover the area we can actually see.
     this.sunOffset = new THREE.Vector3(90, 140, -170);
@@ -104,17 +114,17 @@ export class Game {
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    this.hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x3a5a1e, 0.6);
+    this.hemiLight = new THREE.HemisphereLight(light.hemiSky, light.hemiGround, light.hemiIntensity);
     this.scene.add(this.hemiLight);
 
     // Warm fill light from opposite side
-    const fillLight = new THREE.DirectionalLight(0xffe0b0, 0.3);
+    const fillLight = new THREE.DirectionalLight(light.fill, light.fillIntensity);
     fillLight.position.set(-100, 50, 200);
     this.scene.add(fillLight);
   }
 
   _initTrack() {
-    this.track = new Track(TRACKS.alpenpass);
+    this.track = new Track(this.trackData);
     this.scene.add(this.track.mesh);
 
     // The corridor trimesh is the surface the wheel raycasts hit.
@@ -132,14 +142,23 @@ export class Game {
   _initCar() {
     this.car = new Car(this.world, { color: 0xc41e3a });
     this.scene.add(this.car.mesh);
-    this._respawn();
+
+    const start = this.track.getStartPosition();
+    this.car.reset(start, start.angle);
+    this.race = new Race(this.track);
+    this.race.reset(this.car.chassisBody.position);
+    this.hud = new Hud(this.track, this.race);
   }
 
-  /** Put the car back on the start line, upright and stopped. */
+  /**
+   * Put the car back on the start line. Restarts the lap rather than the whole
+   * session, so a spin does not wipe your best time.
+   */
   _respawn() {
     const start = this.track.getStartPosition();
     this.car.reset(start, start.angle);
     this.overturnedFor = 0;
+    if (this.race) this.race.restartLap(this.car.chassisBody.position);
   }
 
   /**
@@ -183,6 +202,10 @@ export class Game {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  _onRaceEvent(event) {
+    if (this.hud) this.hud.onRaceEvent(event);
   }
 
   _updateSun() {
@@ -269,10 +292,14 @@ export class Game {
       this.accumulator -= this.fixedTimeStep;
     }
 
+    const event = this.race.update(dt, this.car.chassisBody.position);
+    if (event) this._onRaceEvent(event);
+
     this.car.syncVisual();
     this._updateCamera(dt);
     this._updateSun();
     this.environment.update(dt);
+    this.hud.update(this.car);
     this.input.update();
     this.renderer.render(this.scene, this.camera);
   }

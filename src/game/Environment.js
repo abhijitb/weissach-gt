@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 
 export class Environment {
-  constructor(scene) {
+  constructor(scene, theme) {
     this.scene = scene;
+    this.theme = theme;
     this._buildSky();
     this._buildSun();
     this._buildMountains();
@@ -16,12 +17,10 @@ export class Environment {
     const ctx = canvas.getContext('2d');
 
     const gradient = ctx.createLinearGradient(0, 0, 0, 512);
-    gradient.addColorStop(0, '#1a3a6b');
-    gradient.addColorStop(0.2, '#3a6bb5');
-    gradient.addColorStop(0.4, '#6ba3d6');
-    gradient.addColorStop(0.6, '#a3cbe8');
-    gradient.addColorStop(0.8, '#d4e8f5');
-    gradient.addColorStop(1.0, '#e8f0f5');
+    const stops = this.theme.sky;
+    stops.forEach((colour, i) => {
+      gradient.addColorStop(i / (stops.length - 1), colour);
+    });
 
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, 2, 512);
@@ -65,11 +64,7 @@ export class Environment {
   _buildMountains() {
     const mountainGroup = new THREE.Group();
 
-    const ranges = [
-      { distance: 950, height: 320, color: 0x4a6741, count: 18, scale: 1.6 },
-      { distance: 1250, height: 480, color: 0x5a7a5a, count: 15, scale: 2.1 },
-      { distance: 1600, height: 700, color: 0x7a8a9a, count: 12, scale: 2.6 },
-    ];
+    const ranges = this.theme.mountains || [];
 
     for (const range of ranges) {
       for (let i = 0; i < range.count; i++) {
@@ -96,7 +91,8 @@ export class Environment {
         mountain.rotation.y = Math.random() * Math.PI;
 
         // Snow caps on distant mountains
-        if (range.distance >= 1250 && height > 400) {
+        const snowline = this.theme.snowline;
+        if (snowline !== null && snowline !== undefined && range.distance >= snowline && height > 400) {
           const snowGeo = new THREE.ConeGeometry(baseWidth * range.scale * 0.3, height * 0.25, 6);
           const snowMat = new THREE.MeshStandardMaterial({
             color: 0xf0f5ff,
@@ -124,7 +120,8 @@ export class Environment {
       fog: false,
     });
 
-    for (let i = 0; i < 32; i++) {
+    const spec = this.theme.clouds;
+    for (let i = 0; i < spec.count; i++) {
       const cloud = new THREE.Group();
       const puffCount = 3 + Math.floor(Math.random() * 4);
 
@@ -145,7 +142,7 @@ export class Environment {
       const dist = 900 + Math.random() * 1600;
       cloud.position.set(
         Math.cos(angle) * dist,
-        620 + Math.random() * 500,
+        spec.baseHeight + Math.random() * spec.spread,
         Math.sin(angle) * dist
       );
 

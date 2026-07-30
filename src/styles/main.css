@@ -19,3 +19,93 @@ html, body {
   width: 100%;
   height: 100%;
 }
+
+/* --- HUD --------------------------------------------------------------- */
+
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65);
+}
+
+.hud__panel {
+  position: absolute;
+  padding: 10px 14px;
+  background: rgba(12, 16, 22, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  backdrop-filter: blur(3px);
+}
+
+.hud__timing {
+  top: 18px;
+  left: 18px;
+  min-width: 190px;
+}
+
+.hud__speed {
+  bottom: 18px;
+  right: 18px;
+  text-align: right;
+}
+
+.hud__minimap {
+  bottom: 18px;
+  left: 18px;
+  padding: 8px;
+  line-height: 0;
+}
+
+.hud__label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.hud__value {
+  display: block;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.hud__value--small {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.hud__row + .hud__row {
+  margin-top: 6px;
+}
+
+.hud__speed-value {
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hud__unit {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-left: 4px;
+}
+
+.hud__flash {
+  position: absolute;
+  top: 22%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 30px;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.hud__flash--on {
+  opacity: 1;
+}
